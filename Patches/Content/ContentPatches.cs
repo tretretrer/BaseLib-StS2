@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Reflection;
 using BaseLib.Abstracts;
 using BaseLib.Utils;
@@ -12,21 +10,22 @@ namespace BaseLib.Patches.Content;
 [HarmonyPatch(typeof(ModelDb), nameof(ModelDb.InitIds))]
 public static class CustomContentDictionary
 {
-    private static readonly List<Type> _customTypes = [];
-    private static readonly Dictionary<Type, Type> _poolTypes = [];
+    private static readonly Dictionary<Type, int> CustomModelCounts = []; //May log, may just remove.
+    private static readonly Dictionary<Type, Type> PoolTypes = [];
+    
+    public static readonly List<CustomAncientModel> CustomAncients = [];
+    
     static CustomContentDictionary()
     {
-        _poolTypes.Add(typeof(CardPoolModel), typeof(CardModel));
-        _poolTypes.Add(typeof(RelicPoolModel), typeof(RelicModel));
-        _poolTypes.Add(typeof(PotionPoolModel), typeof(PotionModel));
+        PoolTypes.Add(typeof(CardPoolModel), typeof(CardModel));
+        PoolTypes.Add(typeof(RelicPoolModel), typeof(RelicModel));
+        PoolTypes.Add(typeof(PotionPoolModel), typeof(PotionModel));
     }
 
 
     public static void AddModel(Type modelType)
     {
-        _customTypes.Add(modelType);
-
-        PoolAttribute poolAttribute = modelType.GetCustomAttribute<PoolAttribute>()
+        var poolAttribute = modelType.GetCustomAttribute<PoolAttribute>()
             ?? throw new Exception($"Model {modelType.FullName} must be marked with a PoolAttribute to determine which pool to add it to.");
 
         if (!IsValidPool(modelType, poolAttribute.PoolType))
@@ -34,14 +33,26 @@ public static class CustomContentDictionary
             throw new Exception($"Model {modelType.FullName} is assigned to incorrect type of pool {poolAttribute.PoolType.FullName}.");
         }
 
+        int count = CustomModelCounts.GetValueOrDefault(poolAttribute.PoolType, 0);
+        CustomModelCounts[poolAttribute.PoolType] = count + 1;
+        
         ModHelper.AddModelToPool(poolAttribute.PoolType, modelType);
     }
+
+    public static void AddAncient(CustomAncientModel ancient)
+    {
+        int count = CustomModelCounts.GetValueOrDefault(typeof(CustomAncientModel), 0);
+        CustomModelCounts[typeof(CustomAncientModel)] = count + 1;
+        CustomAncients.Add(ancient);
+    }
+    
+    
     private static bool IsValidPool(Type modelType, Type poolType)
     {
         var basePoolType = poolType.BaseType;
         while (basePoolType != null)
         {
-            if (_poolTypes.TryGetValue(basePoolType, out var poolValueType))
+            if (PoolTypes.TryGetValue(basePoolType, out var poolValueType))
             {
                 return modelType.IsAssignableTo(poolValueType);
             }
@@ -49,34 +60,48 @@ public static class CustomContentDictionary
         }
         throw new Exception($"Model {modelType.FullName} is assigned to {poolType.FullName} which is not a valid pool type.");
     }
+}
 
-
+[HarmonyPatch(typeof(ModelDb), nameof(ModelDb.AllSharedAncients), MethodType.Getter)]
+class CustomAncientsInPoolPatch
+{
     [HarmonyPostfix]
-    static void ConvertTypesToModels()
+    static IEnumerable<AncientEventModel> AddCustomPools(IEnumerable<AncientEventModel> __result)
     {
-        MainFile.Logger.Info($"Custom Models: {_customTypes.Count}");
+        return [.. __result, .. CustomContentDictionary.CustomAncients];
     }
 }
 
-[HarmonyPatch(typeof(ModelDb), "AllSharedCardPools", MethodType.Getter)]
-public class ModelDbSharedCardPoolsPatch
+[HarmonyPatch(typeof(ActModel), nameof(ActModel.SetSharedAncientSubset))]
+class FilterCustomAncients
 {
-    private static readonly List<CardPoolModel> customSharedPools = [];
+    [HarmonyPrefix]
+    static void RemoveInvalid(ActModel __instance, List<AncientEventModel> sharedAncientSubset)
+    {
+        sharedAncientSubset.RemoveAll(ancient =>
+            ancient is CustomAncientModel customAncient && !customAncient.IsValidForAct(__instance));
+    }
+}
+
+[HarmonyPatch(typeof(ModelDb), nameof(ModelDb.AllSharedCardPools), MethodType.Getter)]
+class ModelDbSharedCardPoolsPatch
+{
+    private static readonly List<CardPoolModel> CustomSharedPools = [];
 
     [HarmonyPostfix]
     static IEnumerable<CardPoolModel> AddCustomPools(IEnumerable<CardPoolModel> __result)
     {
-        return [.. __result, .. customSharedPools];
+        return [.. __result, .. CustomSharedPools];
     }
 
     public static void Register(CustomCardPoolModel pool)
     {
-        customSharedPools.Add(pool);
+        CustomSharedPools.Add(pool);
     }
 }
 
 [HarmonyPatch(typeof(ModelDb), "AllSharedRelicPools", MethodType.Getter)]
-public class ModelDbSharedRelicPoolsPatch
+class ModelDbSharedRelicPoolsPatch
 {
     private static readonly List<RelicPoolModel> customSharedPools = [];
 
@@ -93,7 +118,7 @@ public class ModelDbSharedRelicPoolsPatch
 }
 
 [HarmonyPatch(typeof(ModelDb), "AllSharedPotionPools", MethodType.Getter)]
-public class ModelDbSharedPotionPoolsPatch
+class ModelDbSharedPotionPoolsPatch
 {
     private static readonly List<PotionPoolModel> customSharedPools = [];
 

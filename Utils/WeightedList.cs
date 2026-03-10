@@ -4,6 +4,11 @@ using MegaCrit.Sts2.Core.Random;
 
 namespace BaseLib.Utils;
 
+public interface IWeighted
+{
+    int Weight { get; }
+}
+
 public class WeightedList<T> : IList<T>
 {
     private readonly List<WeightedItem> _items = [];
@@ -53,7 +58,7 @@ public class WeightedList<T> : IList<T>
 
     public void Add(T item)
     {
-        Add(item, 1);
+        Add(item, item is IWeighted weighted ? weighted.Weight : 1);
     }
     public void Add(T item, int weight) {
         _totalWeight += weight;

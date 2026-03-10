@@ -10,11 +10,13 @@
     <PropertyGroup>
         <IsPackable>true</IsPackable>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        
         <PackageId>Alchyr.Sts2.BaseLib</PackageId>
-        <Version>0.0.4</Version>
-        <Authors>Alchyr</Authors>
+        <Title>BaseLib-StS2</Title>
         <Description>Mod for Slay the Spire 2 providing utilities and features for other mods.</Description>
-        <PackageReleaseNotes>Add basic mod config</PackageReleaseNotes>
+        <Version>0.0.5</Version>
+        <Authors>Alchyr</Authors>
+        <PackageReleaseNotes>CustomAncientModel</PackageReleaseNotes>
         <PackageTags>c#</PackageTags>
         <NoWarn>$(NoWarn);NU5128</NoWarn>
 
