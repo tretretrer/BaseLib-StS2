@@ -38,8 +38,17 @@ public abstract partial class ModConfig
         filename = filename == null ? _path : SpecialCharRegex().Replace(filename, "");
         if (!filename.Contains('.')) filename += ".cfg";
 
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (appData == "") appData = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+        string? appData;
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+        {
+            // On Android, use Godot's user data directory
+            appData = OS.GetUserDataDir();
+        }
+        else
+        {
+            appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (appData == "") appData = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+        }   
         var libFolder = OperatingSystem.IsMacOS() ? "Library" : ".baselib";
         _path = Path.Combine(appData, libFolder, _path, filename);
 
