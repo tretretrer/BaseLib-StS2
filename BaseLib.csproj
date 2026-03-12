@@ -131,4 +131,26 @@
     <Target Name="GodotPublishSkipped" AfterTargets="Publish" Condition="'$(GodotPath)' == '' or !Exists('$(GodotPath)')">
         <Message Text="Skipping Godot .pck export because GodotPath is not configured." Importance="high"/>
     </Target>
+
+    <Target Name="UpdateManifestVersion" BeforeTargets="Publish">
+      <PropertyGroup>
+        <ManifestPath>$(MSBuildProjectDirectory)\mod_manifest.json</ManifestPath>
+      </PropertyGroup>
+
+      <PropertyGroup>
+        <OldContent>$([System.IO.File]::ReadAllText($(ManifestPath)))</OldContent>
+        <NewContent>$([System.Text.RegularExpressions.Regex]::Replace($(OldContent), '("version":\s*")[^"]*', '$1v$(Version)'))</NewContent>
+      </PropertyGroup>
+
+      <WriteLinesToFile
+        Condition="'$(OldContent)' != '$(NewContent)'"
+        File="$(ManifestPath)"
+        Lines="$(NewContent)"
+        Overwrite="true"
+        Encoding="UTF-8" />
+
+      <Message Condition="'$(OldContent)' != '$(NewContent)'"
+               Text="Updated mod_manifest.json to version $(Version)"
+               Importance="high" />
+    </Target>
 </Project>
