@@ -26,7 +26,7 @@ public class SpireField<TKey, TVal> where TKey : class
     public TVal? this[TKey obj]
     {
         get => Get(obj);
-        set => Set(obj, ref value);
+        set => Set(obj, value);
     }
 
     public TVal? Get(TKey obj) {
@@ -36,7 +36,7 @@ public class SpireField<TKey, TVal> where TKey : class
         return (TVal?)result;
     }
 
-    public void Set(TKey obj, ref TVal? val)
+    public void Set(TKey obj, TVal? val)
     {
         _table.AddOrUpdate(obj, val);
     }
