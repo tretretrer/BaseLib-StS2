@@ -3,8 +3,14 @@ using MegaCrit.Sts2.Core.Animation;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
-using System.Collections.Generic;
 using BaseLib.Utils;
+using Godot;
+using MegaCrit.Sts2.Core.Entities.Players;
+using System.Reflection;
+using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Helpers;
+using BaseLib.Utils.Patching;
+using System.Reflection.Emit;
 
 namespace BaseLib.Abstracts;
 
@@ -22,6 +28,7 @@ public abstract class CustomCharacterModel : CharacterModel, ICustomModel
     public virtual string? CustomTrailPath => null;
     public virtual string? CustomIconTexturePath => null; //smaller icon used in popup showing saved run info
     public virtual string? CustomIconPath => null; //top left while in run, and also icon for compendium pool filter
+    public virtual CustomEnergyCounter? CustomEnergyCounter => null;
     public virtual string? CustomEnergyCounterPath => null;
     public virtual string? CustomRestSiteAnimPath => null;
     public virtual string? CustomMerchantAnimPath => null;
@@ -117,6 +124,60 @@ public abstract class CustomCharacterModel : CharacterModel, ICustomModel
         animator.AddAnyState("Relaxed", relaxed);
 
         return animator;
+    }
+}
+    
+public readonly struct CustomEnergyCounter(Func<int, string> pathFunc, Color outlineColor, Color burstColor) {
+    private readonly Func<int, string> _getPath = pathFunc;
+    public readonly Color OutlineColor = outlineColor;
+    public readonly Color BurstColor = burstColor;
+
+    public string LayerImagePath(int layer) => _getPath(layer);
+} 
+
+[HarmonyPatch(typeof(NEnergyCounter), "OutlineColor", MethodType.Getter)]
+public class EnergyCounterOutlineColorPatch {
+    private static readonly FieldInfo? PlayerProp = typeof(NEnergyCounter).GetField("_player", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    static bool Prefix(NEnergyCounter __instance, ref Color __result) {
+        if (PlayerProp?.GetValue(__instance) is Player player && player.Character is CustomCharacterModel model && model.CustomEnergyCounter is CustomEnergyCounter counter) {
+            __result = counter.OutlineColor;
+            return false;
+        }
+        return true;
+    }
+}
+
+[HarmonyPatch(typeof(NEnergyCounter), nameof(NEnergyCounter.Create))]
+class EnergyCounterPatch {
+    static List<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) {
+        return new InstructionPatcher(instructions)
+            .Match(new InstructionMatcher()
+                .ldc_i4_0()
+                .opcode(OpCodes.Conv_I8)
+                .callvirt(null)
+                .stloc_0()
+            )
+            .Insert([
+                CodeInstruction.LoadLocal(0),
+                CodeInstruction.LoadArgument(0),
+                CodeInstruction.Call(typeof(EnergyCounterPatch), nameof(ChangeIroncladEnergy)),
+                CodeInstruction.StoreLocal(0),
+            ]);
+    }
+
+    static NEnergyCounter ChangeIroncladEnergy(NEnergyCounter defaultCounter, Player player) {
+        if (player.Character is not CustomCharacterModel model || model.CustomEnergyCounter is not CustomEnergyCounter counter)
+            return defaultCounter;
+        NEnergyCounter energyCounter = PreloadManager.Cache.GetScene(SceneHelper.GetScenePath(string.Concat("combat/energy_counters/ironclad_energy_counter"))).Instantiate<NEnergyCounter>(0);
+        energyCounter.GetNode<TextureRect>("%Layers/Layer1").Texture = ResourceLoader.Load<Texture2D>(counter.LayerImagePath(1));
+        energyCounter.GetNode<TextureRect>("%RotationLayers/Layer2").Texture = ResourceLoader.Load<Texture2D>(counter.LayerImagePath(2));
+        energyCounter.GetNode<TextureRect>("%RotationLayers/Layer3").Texture = ResourceLoader.Load<Texture2D>(counter.LayerImagePath(3));
+        energyCounter.GetNode<TextureRect>("%Layers/Layer4").Texture = ResourceLoader.Load<Texture2D>(counter.LayerImagePath(4));
+        energyCounter.GetNode<TextureRect>("%Layers/Layer5").Texture = ResourceLoader.Load<Texture2D>(counter.LayerImagePath(5));
+        energyCounter.GetNode<CpuParticles2D>("%BurstBack").Color = counter.BurstColor;
+        energyCounter.GetNode<CpuParticles2D>("%BurstFront").Color = counter.BurstColor;
+        return energyCounter;
     }
 }
 

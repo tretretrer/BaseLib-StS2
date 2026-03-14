@@ -10,7 +10,7 @@ namespace BaseLib.Abstracts;
 //All card pools must either be a character pool or a shared pool, otherwise they will not be found.
 //Character pools are found from CharacterModel.CardPool
 //Shared pools are defined in ModelDb.AllSharedCardPools
-public abstract class CustomCardPoolModel : CardPoolModel, ICustomModel
+public abstract class CustomCardPoolModel : CardPoolModel, ICustomModel, ICustomEnergyIconPool
 {
     public CustomCardPoolModel()
     {
@@ -46,6 +46,10 @@ public abstract class CustomCardPoolModel : CardPoolModel, ICustomModel
     protected override CardModel[] GenerateAllCards() => []; //Content added through ModHelper.ConcatModelsFromMods
 
     public virtual bool IsShared => false;
+
+    public override string EnergyColorName => CustomEnergyIconPatches.GetEnergyColorName(Id);
+    public virtual string? BigEnergyIconPath => null;
+    public virtual string? TextEnergyIconPath => null;
 }
 
 [HarmonyPatch(typeof(CardPoolModel), "FrameMaterial", MethodType.Getter)]

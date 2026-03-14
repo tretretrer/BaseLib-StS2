@@ -74,6 +74,11 @@ public class InstructionMatcher() : IMatcher
 
     //Building
     //https://learn.microsoft.com/en-us/dotnet/api/system.reflection.emit.opcodes.add?view=net-10.0
+    public InstructionMatcher opcode(OpCode opCode)
+    {
+        _target.Add(new(opCode));
+        return this;
+    }
     public InstructionMatcher nop()
     {
         _target.Add(new(opcode: OpCodes.Nop));

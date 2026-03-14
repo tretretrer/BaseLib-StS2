@@ -1,7 +1,6 @@
 using Godot;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Nodes.Combat;
-using System.Collections.Generic;
 
 namespace BaseLib.Utils;
 
@@ -9,9 +8,16 @@ public static class GodotUtils
 {
     public static NCreatureVisuals CreatureVisualsFromScene(string path)
     {
+        Node n = PreloadManager.Cache.GetScene(path).Instantiate();
+        if (n is NCreatureVisuals visuals)
+        {
+            MainFile.Logger.Info("Visuals are NCreatureVisuals, returning directly");
+            return visuals;
+        }
+        MainFile.Logger.Info("Visuals are not NCreatureVisuals, attempting conversion");
+        
         var visualsNode = new NCreatureVisuals();
-
-        TransferNodes(visualsNode, PreloadManager.Cache.GetScene(path).Instantiate(), "Visuals", "Bounds", "IntentPos", "CenterPos", "OrbPos", "TalkPos");
+        TransferNodes(visualsNode, n, "Visuals", "Bounds", "IntentPos", "CenterPos", "OrbPos", "TalkPos");
 
         return visualsNode;
     }
