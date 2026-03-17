@@ -1,9 +1,6 @@
-using System;
 using System.Runtime.InteropServices;
 using BaseLib.Config;
-using BaseLib.Config.UI;
 using BaseLib.Patches.Content;
-using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
 

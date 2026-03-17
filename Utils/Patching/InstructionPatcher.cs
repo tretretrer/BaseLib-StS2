@@ -61,6 +61,20 @@ public class InstructionPatcher(IEnumerable<CodeInstruction> instructions)
         return this;
     }
 
+    public InstructionPatcher MatchStart()
+    {
+        index = 0;
+        lastMatchStart = 0;
+        return this;
+    }
+
+    public InstructionPatcher MatchEnd()
+    {
+        index = code.Count;
+        lastMatchStart = 0;
+        return this;
+    }
+
     /// <summary>
     /// Adjust current position in code instructions.
     /// Should only be called after <seealso cref="Match(Action{IMatcher[]}, IMatcher[])"/> is called at least once.
@@ -259,15 +273,16 @@ public class InstructionPatcher(IEnumerable<CodeInstruction> instructions)
     /// <summary>
     /// Inserts a sequence of CodeInstructions before the current instruction (after the last match).
     /// </summary>
-    /// <param name="instruction"></param>
+    /// <param name="insert"></param>
     /// <returns></returns>
     /// <exception cref="Exception"></exception>
     public InstructionPatcher Insert(IEnumerable<CodeInstruction> insert)
     {
         if (index < 0) throw new Exception("Attempted to Insert without any match found");
 
-        code.InsertRange(index, insert);
-        index += insert.Count();
+        var codeInstructions = insert as CodeInstruction[] ?? insert.ToArray();
+        code.InsertRange(index, codeInstructions);
+        index += codeInstructions.Length;
 
         return this;
     }
