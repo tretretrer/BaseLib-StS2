@@ -1,6 +1,8 @@
-﻿using Godot;
+﻿using System.Reflection;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Potions;
 using MegaCrit.Sts2.Core.Nodes.Relics;
@@ -41,20 +43,26 @@ static class ModelUiPatch
     [HarmonyPatch(typeof(NRelic), "Reload")]
     static class RelicUi
     {
+        private static readonly FieldInfo RelicModel = AccessTools.Field(typeof(NRelic), "_model");
+        
         [HarmonyPostfix]
         static void Postfix(NRelic __instance)
         {
-            Recreate(__instance, __instance.Model);
+            if (RelicModel.GetValue(__instance) is not RelicModel model) return;
+            Recreate(__instance, model);
         }
     }
     
     [HarmonyPatch(typeof(NPotion), "Reload")]
     static class PotionUi
     {
+        private static readonly FieldInfo PotionModel = AccessTools.Field(typeof(NPotion), "_model");
+        
         [HarmonyPostfix]
         static void Postfix(NPotion __instance)
         {
-            Recreate(__instance, __instance.Model);
+            if (PotionModel.GetValue(__instance) is not PotionModel model) return;
+            Recreate(__instance, model);
         }
     }
 

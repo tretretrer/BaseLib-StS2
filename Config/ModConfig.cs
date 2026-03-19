@@ -12,44 +12,67 @@ using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
-using Environment = System.Environment;
 
 namespace BaseLib.Config;
 
 public abstract partial class ModConfig
 {
     private const string SettingsTheme = "res://themes/settings_screen_line_header.tres";
+
+    /// <summary>
+    /// Event that fires when <see cref="Changed()"/> is called. Custom controls must call Changed() when mutating
+    /// a property.
+    /// </summary>
     public event EventHandler? ConfigChanged;
 
     private readonly string _path;
     protected string ModPrefix { get; private set; }
 
+    private readonly string _modConfigName;
+    private bool _savingDisabled;
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     protected readonly List<PropertyInfo> ConfigProperties = [];
+
+    public static class ModConfigLogger
+    {
+        public static List<string> PendingUserMessages { get; } = [];
+
+        public static void Warn(string message, bool showInGui = false)
+        {
+            MainFile.Logger.Warn(message);
+            if (showInGui && !PendingUserMessages.Contains(message)) PendingUserMessages.Add(message);
+        }
+
+        public static void Error(string message, bool showInGui = true)
+        {
+            MainFile.Logger.Error(message);
+            if (showInGui && !PendingUserMessages.Contains(message)) PendingUserMessages.Add(message);
+        }
+    }
 
     public ModConfig(string? filename = null)
     {
         ModPrefix = GetType().GetPrefix();
-        _path = GetType().GetRootNamespace();
-        if (_path == "") _path = "Unknown";
-        
-        _path = SpecialCharRegex().Replace(_path, "");
-        
-        filename = filename == null ? _path : SpecialCharRegex().Replace(filename, "");
+        _modConfigName = GetType().FullName ?? "unknown";
+        var rootNamespace = GetType().GetRootNamespace();
+
+        if (string.IsNullOrEmpty(rootNamespace) && string.IsNullOrEmpty(filename))
+        {
+            var message = "Cannot determine a safe configuration file path for " +
+                          $"{_modConfigName} (assembly {GetType().Assembly.GetName().Name}). " +
+                          "You must either place your configuration class inside a namespace, " +
+                          "or explicitly provide a filename in the constructor.";
+            ModConfigLogger.Error(message); // Shows it in the GUI when opening ANY mod config menu
+            throw new InvalidOperationException(message);
+        }
+
+        var defaultFilename = SpecialCharRegex().Replace(rootNamespace, "");
+
+        filename = filename == null ? defaultFilename : SpecialCharRegex().Replace(filename, "");
         if (!filename.Contains('.')) filename += ".cfg";
 
-        string? appData;
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
-        {
-            // On Android, use Godot's user data directory
-            appData = OS.GetUserDataDir();
-        }
-        else
-        {
-            appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (appData == "") appData = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
-        }   
-        var libFolder = OperatingSystem.IsMacOS() ? "Library" : ".baselib";
-        _path = Path.Combine(appData, libFolder, _path, filename);
+        _path = Path.Combine(OS.GetUserDataDir(), "mod_configs", filename);
 
         CheckConfigProperties();
         Init();
@@ -64,7 +87,13 @@ public abstract partial class ModConfig
         ConfigProperties.Clear();
         foreach (var property in configType.GetProperties())
         {
-            if (!property.CanRead || !property.CanWrite || property.GetMethod?.IsStatic != true) continue;
+            if (!property.CanRead || !property.CanWrite) continue;
+            if (property.GetMethod?.IsStatic != true)
+            {
+                ModConfigLogger.Warn($"Ignoring {_modConfigName} property {property.Name}: only static properties are supported", true);
+                continue;
+            }
+
             ConfigProperties.Add(property);
         }
     }
@@ -73,112 +102,150 @@ public abstract partial class ModConfig
 
     private void Init()
     {
-        //Check for existing config file.
-        //If it doesn't exist, save it. If it does, laod it.
-        _ = File.Exists(_path) ? Load() : Save();
+        if (File.Exists(_path)) Load();
+        else Save(); // Save default values
     }
 
     public void Changed()
     {
         ConfigChanged?.Invoke(this, EventArgs.Empty);
     }
-    
+
     //Would be slightly more straightforward to directly serialize/deserialize the class,
     //But it would require slightly more setup on the user's part.
-    private bool _fileActive = false;
-    
-    public async Task Save()
+    public void Save()
     {
-        if (_fileActive) return;
-        
-        _fileActive = true;
-        
+        if (_savingDisabled)
+        {
+            ModConfigLogger.Error($"Skipping save for {_modConfigName} because the config file is currently in a corrupted, read-only state.");
+            return;
+        }
+
         Dictionary<string, string> values = [];
         foreach (var property in ConfigProperties)
         {
             var value = property.GetValue(null);
-            if (value != null) values.Add(property.Name, value.ToString() ?? string.Empty);
+
+            var converter = TypeDescriptor.GetConverter(property.PropertyType);
+            var stringValue = converter.ConvertToInvariantString(value);
+
+            if (stringValue != null)
+                values.Add(property.Name, stringValue);
+            else
+                ModConfigLogger.Warn($"Failed to convert {_modConfigName} property {property.Name} to string for saving; it will be omitted.", true);
         }
 
         try
         {
             new FileInfo(_path).Directory?.Create();
-            await using var fileStream = File.Create(_path);
-            await JsonSerializer.SerializeAsync(fileStream, values);
+            using var fileStream = File.Create(_path);
+            JsonSerializer.Serialize(fileStream, values, JsonOptions);
         }
         catch (Exception e)
         {
-            MainFile.Logger.Error($"Failed to save config {GetType().FullName}:");
-            MainFile.Logger.Error(e.ToString());
+            ModConfigLogger.Error($"Failed to save config {_modConfigName}: {e.Message}");
+        }
+    }
+
+    public void Load()
+    {
+        if (!File.Exists(_path))
+        {
+            ModConfigLogger.Error($"Load for {_modConfigName} failed. File not found: {_path}");
+            return;
         }
 
-        _fileActive = false;
-    }
-    
-    public async Task Load()
-    {
-        if (_fileActive ||!File.Exists(_path)) return;
-        
-        _fileActive = true;
-        var hadError = false;
-        
+        // Missing fields or bad values (safe to overwrite the config if true)
+        var hasSoftErrors = false;
+
+        // Hard errors disable saving (until the next successful load)
+        _savingDisabled = false;
+
         try
         {
-            await using var fileStream = File.OpenRead(_path);
-            var values = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(fileStream);
+            using var fileStream = File.OpenRead(_path);
+            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(fileStream);
 
-            if (values != null)
+            if (values == null)
+            {
+                ModConfigLogger.Warn($"Config file {_modConfigName} was empty or null. Will re-save using default values.");
+                hasSoftErrors = true;
+            }
+            else
             {
                 foreach (var property in ConfigProperties)
                 {
-                    if (values.TryGetValue(property.Name, out var value))
+                    if (!values.TryGetValue(property.Name, out var value))
                     {
-                        var converter = TypeDescriptor.GetConverter(property.PropertyType);
-                        try
-                        {
-                            var configVal = converter.ConvertFromString(value);
-                            if (configVal == null)
-                            {
-                                MainFile.Logger.Warn($"Failed to load saved config value \"{value}\" for property {property.Name}");
-                                hadError = true;
-                                continue;
-                            }
-                        
-                            var oldVal = property.GetValue(null);
-                            if (!configVal.Equals(oldVal))
-                            {
-                                property.SetValue(null, configVal);
-                            }
-                        }
-                        catch (Exception)
-                        {
-                            MainFile.Logger.Warn($"Failed to load saved config value \"{value}\" for property {property.Name}");
-                            hadError = true;
-                        }
+                        // Missing value; might be due to a new mod version, etc. Re-save later to fill it in.
+                        ModConfigLogger.Warn($"Config {_modConfigName} has no value for {property.Name}; will re-save to fill in the default.");
+                        hasSoftErrors = true;
+                        continue;
                     }
+
+                    if (!TryApplyPropertyValue(property, value)) hasSoftErrors = true;
                 }
-                
-                MainFile.Logger.Info($"Loaded config {GetType().FullName} successfully");
+
+                MainFile.Logger.Info(!hasSoftErrors
+                    ? $"Loaded config {_modConfigName} successfully"
+                    : $"Loaded config {_modConfigName} with some missing or invalid fields.");
             }
         }
-        catch (Exception)
+        catch (JsonException jsonEx)
         {
-            MainFile.Logger.Error("Failed to load config; most likely config types were changed.");
-            hadError = true;
+            ModConfigLogger.Error($"Failed to parse config file for {_modConfigName}. The JSON is likely invalid. " +
+                                  $"Error: {jsonEx.Message}");
+            ModConfigLogger.Warn("Config saving has been DISABLED for this session to protect any manual edits. " +
+                                 "Please fix the JSON formatting.", true);
+            _savingDisabled = true;
+            return;
         }
-        
-        _fileActive = false;
-
-        if (hadError)
+        catch (Exception e)
         {
-            MainFile.Logger.Error("Error occured loading config; saving new config.");
-            await Save();
+            ModConfigLogger.Error($"Unexpected error loading config {_modConfigName}: {e.Message}");
+            return;
+        }
+
+        if (hasSoftErrors && !_savingDisabled)
+        {
+            ModConfigLogger.Warn($"Saving fresh config for {_modConfigName} to correct soft errors (missing fields, invalid fields).");
+            Save();
+        }
+    }
+
+    // Convert a single value and update the property. Return true on success, false on failure.
+    private static bool TryApplyPropertyValue(PropertyInfo property, string value)
+    {
+        try
+        {
+            var converter = TypeDescriptor.GetConverter(property.PropertyType);
+            var configVal = converter.ConvertFromInvariantString(value);
+
+            if (configVal == null)
+            {
+                ModConfigLogger.Warn($"Failed to load saved config value \"{value}\" for property {property.Name}:" +
+                                     "Converter returned null.", true);
+                return false;
+            }
+
+            var oldVal = property.GetValue(null);
+            if (!configVal.Equals(oldVal))
+            {
+                property.SetValue(null, configVal);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ModConfigLogger.Warn($"Failed to load saved config value \"{value}\" for property {property.Name}. " +
+                                 $"Error: {ex.Message}", true);
+            return false;
         }
     }
 
     protected string GetLabelText(string labelName)
     {
-        if (labelName.Contains(' ')) return labelName;
         var loc = LocString.GetIfExists("settings_ui", ModPrefix + StringHelper.Slugify(labelName) + ".title");
         return loc != null ? loc.GetFormattedText() : labelName;
     }
@@ -238,7 +305,12 @@ public abstract partial class ModConfig
                 }
                 ++count;
                 var loc = LocString.GetIfExists("settings_ui", $"{ModPrefix}{StringHelper.Slugify(property.Name)}.{value}");
-                items.Add(new(loc?.GetRawText() ?? value?.ToString() ?? "UNKNOWN", () => property.SetValue(null, value)));
+                var label = loc?.GetRawText() ?? value?.ToString() ?? "UNKNOWN";
+                items.Add(new (label, () =>
+                {
+                    property.SetValue(null, value);
+                    Changed();
+                }));
             }
         }
         else //Check for dropdown options attribute
@@ -290,6 +362,6 @@ public abstract partial class ModConfig
         };
     }
 
-    [GeneratedRegex("[^a-zA-Z0-9_]")]
+    [GeneratedRegex("[^a-zA-Z0-9_.]")]
     private static partial Regex SpecialCharRegex();
 }
