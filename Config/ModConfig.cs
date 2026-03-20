@@ -193,7 +193,7 @@ public abstract partial class ModConfig
         }
         catch (JsonException jsonEx)
         {
-            ModConfigLogger.Error($"Failed to parse config file for {_modConfigName}. The JSON is likely invalid. " +
+            ModConfigLogger.Error($"Failed to parse config file for {_modConfigName}. The JSON is likely invalid.\n" +
                                   $"Error: {jsonEx.Message}");
             ModConfigLogger.Warn("Config saving has been DISABLED for this session to protect any manual edits. " +
                                  "Please fix the JSON formatting.", true);

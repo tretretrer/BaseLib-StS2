@@ -1,4 +1,5 @@
-﻿using BaseLib.Utils;
+﻿using BaseLib.Extensions;
+using BaseLib.Utils;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
@@ -140,14 +141,7 @@ public partial class NModConfigPopup : NClickableControl
             _currentConfig = config;
             config.ConfigChanged += OnConfigChanged;
             Show();
-
-            var pendingMessages = ModConfig.ModConfigLogger.PendingUserMessages;
-            if (pendingMessages.Count > 0)
-            {
-                var popup = NErrorPopup.Create("Mod configuration error", string.Join('\n', pendingMessages), false);
-                NModalContainer.Instance?.Add(popup!);
-                pendingMessages.Clear();
-            }
+            ShowAndClearPendingErrors();
         }
         catch (Exception e)
         {
@@ -199,5 +193,23 @@ public partial class NModConfigPopup : NClickableControl
     {
         _currentConfig?.Save();
         _saveTimer = -1;
+    }
+
+    protected static void ShowAndClearPendingErrors()
+    {
+        var pendingMessages = ModConfig.ModConfigLogger.PendingUserMessages;
+        if (pendingMessages.Count > 0)
+        {
+            var errorPopup = NErrorPopup.Create("Mod configuration error",
+                string.Join('\n', pendingMessages), false);
+            if (errorPopup == null || NModalContainer.Instance == null) return;
+            NModalContainer.Instance.Add(errorPopup);
+
+            var vertPopup = errorPopup.GetNodeOrNull<NVerticalPopup>("VerticalPopup");
+            if (vertPopup == null) return;
+            vertPopup.BodyLabel.AddThemeFontSizeOverrideAll(22);
+
+            pendingMessages.Clear();
+        }
     }
 }
