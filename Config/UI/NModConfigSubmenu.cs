@@ -213,6 +213,8 @@ public partial class NModConfigSubmenu : NSubmenu
         }
         catch (Exception e)
         {
+            ModConfig.ModConfigLogger.Error("An error occurred while loading the mod config screen." +
+                                            "Please report a bug at:\nhttps://github.com/Alchyr/BaseLib-StS2");
             MainFile.Logger.Error(e.ToString());
             _stack.Pop();
         }
@@ -228,7 +230,7 @@ public partial class NModConfigSubmenu : NSubmenu
         if (locStr == null)
         {
             ModConfig.ModConfigLogger.Warn(
-                $"No {locKey} found in localization table, using mod namespace as title");
+                $"No {locKey} found in localization table, using mod namespace {fallbackTitle} as title");
         }
 
         var titleText = locStr?.GetFormattedText() ?? fallbackTitle;
@@ -271,6 +273,13 @@ public partial class NModConfigSubmenu : NSubmenu
         if (_currentConfig != null) _currentConfig.ConfigChanged -= OnConfigChanged;
         if (_opener != null) _opener.IsConfigOpen = false;
         SaveCurrentConfig();
+
+        if (ModConfig.ModConfigLogger.PendingUserMessages.Count > 0)
+        {
+            // The main menu will only show this when recreated; if a player goes from settings to play a game,
+            // that is AFTER finishing the game. We need to show the error now, so let's check here, too.
+            Callable.From(ModConfig.ShowAndClearPendingErrors).CallDeferred();
+        }
 
         base.OnSubmenuHidden();
     }

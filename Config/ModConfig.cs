@@ -12,9 +12,22 @@ using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
 
 namespace BaseLib.Config;
+
+// NMainMenu is recreated every time you return from a run, etc., so this isn't a run-once as it seems.
+// We also check for errors when exiting the mod config submenu, as that won't trigger this code.
+[HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
+public static class NMainMenu_Ready_Patch
+{
+    public static void Postfix()
+    {
+        if (ModConfig.ModConfigLogger.PendingUserMessages.Count == 0) return;
+        Callable.From(ModConfig.ShowAndClearPendingErrors).CallDeferred();
+    }
+}
 
 public abstract partial class ModConfig
 {
@@ -39,12 +52,17 @@ public abstract partial class ModConfig
     {
         public static List<string> PendingUserMessages { get; } = [];
 
+        /// <summary>
+        /// Show a message in the console, and optionally in the GUI. Only use showInGui=true if truly necessary;
+        /// players won't enjoy having warnings/errors shoved in their faces unless it's something that truly impacts them.
+        /// </summary>
         public static void Warn(string message, bool showInGui = false)
         {
             MainFile.Logger.Warn(message);
             if (showInGui && !PendingUserMessages.Contains(message)) PendingUserMessages.Add(message);
         }
 
+        /// <inheritdoc cref="Warn" />
         public static void Error(string message, bool showInGui = true)
         {
             MainFile.Logger.Error(message);
@@ -91,7 +109,7 @@ public abstract partial class ModConfig
             if (!property.CanRead || !property.CanWrite) continue;
             if (property.GetMethod?.IsStatic != true)
             {
-                ModConfigLogger.Warn($"Ignoring {_modConfigName} property {property.Name}: only static properties are supported", true);
+                ModConfigLogger.Warn($"Ignoring {_modConfigName} property {property.Name}: only static properties are supported");
                 continue;
             }
 
@@ -118,22 +136,36 @@ public abstract partial class ModConfig
     {
         if (_savingDisabled)
         {
-            ModConfigLogger.Error($"Skipping save for {_modConfigName} because the config file is currently in a corrupted, read-only state.");
+            // No GUI error here, because that would've been shown already when _savingDisabled was set.
+            ModConfigLogger.Warn($"Skipping save for {_modConfigName} because the config file is currently in a corrupted, read-only state.");
             return;
         }
 
         Dictionary<string, string> values = [];
-        foreach (var property in ConfigProperties)
+
+        try
         {
-            var value = property.GetValue(null);
+            foreach (var property in ConfigProperties)
+            {
+                var value = property.GetValue(null);
 
-            var converter = TypeDescriptor.GetConverter(property.PropertyType);
-            var stringValue = converter.ConvertToInvariantString(value);
+                var converter = TypeDescriptor.GetConverter(property.PropertyType);
+                var stringValue = converter.ConvertToInvariantString(value);
 
-            if (stringValue != null)
-                values.Add(property.Name, stringValue);
-            else
-                ModConfigLogger.Warn($"Failed to convert {_modConfigName} property {property.Name} to string for saving; it will be omitted.", true);
+                if (stringValue != null)
+                    values.Add(property.Name, stringValue);
+                else
+                {
+                    ModConfigLogger.Warn(
+                        $"Failed to convert {_modConfigName} property {property.Name} to string for saving; " +
+                        "it will be omitted.");
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // During testing, I have never seen an exception here, but let's avoid a game crash/menu hang, etc.
+            ModConfigLogger.Error($"Failed to save config {_modConfigName}: unknown error during conversion.", false);
         }
 
         try
@@ -187,21 +219,20 @@ public abstract partial class ModConfig
                     if (!TryApplyPropertyValue(property, value)) hasSoftErrors = true;
                 }
 
-                MainFile.Logger.Info(!hasSoftErrors
-                    ? $"Loaded config {_modConfigName} successfully"
-                    : $"Loaded config {_modConfigName} with some missing or invalid fields.");
+                if (hasSoftErrors)
+                    ModConfigLogger.Warn($"Loaded config {_modConfigName} with some missing or invalid fields.");
             }
         }
         catch (JsonException jsonEx)
         {
+            // Unlikely to happen except for people who have modified the file manually, so let's be verbose and show in GUI.
             var locationText = jsonEx.LineNumber.HasValue
                 ? $"Line {jsonEx.LineNumber + 1}, position {jsonEx.BytePositionInLine + 1}"
                 : "unknown line";
             ModConfigLogger.Error($"Failed to parse config file for {_modConfigName}. The JSON is likely invalid.\n" +
                                   $"File path: {_path}\n" +
                                   $"Error location: {locationText}");
-            ModConfigLogger.Warn("Config saving has been DISABLED for this session to protect any manual edits. " +
-                                 "Please fix the JSON formatting.", true);
+            ModConfigLogger.Warn("Config saving has been DISABLED for this mod to protect any manual edits.", true);
             _savingDisabled = true;
             return;
         }
@@ -229,7 +260,7 @@ public abstract partial class ModConfig
             if (configVal == null)
             {
                 ModConfigLogger.Warn($"Failed to load saved config value \"{value}\" for property {property.Name}:" +
-                                     "Converter returned null.", true);
+                                     "Converter returned null.");
                 return false;
             }
 
@@ -244,7 +275,7 @@ public abstract partial class ModConfig
         catch (Exception ex)
         {
             ModConfigLogger.Warn($"Failed to load saved config value \"{value}\" for property {property.Name}. " +
-                                 $"Error: {ex.Message}", true);
+                                 $"Error: {ex.Message}");
             return false;
         }
     }
